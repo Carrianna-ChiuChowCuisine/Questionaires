@@ -617,29 +617,88 @@ class ProposalApp {
         this.fadeOutBGM();
         if (this.questionBgm) this.fadeOutAudioVolume(this.questionBgm, CONFIG.timings.bgmFade);
 
-        // 创建并播放 end 视频（不循环），播放到最后一帧时停止在最后一帧
+        // 创建 end 视频与音效，并尝试在两者都就绪后同时开始播放以保证同步
         const endVideo = document.createElement('video');
         endVideo.className = 'video-background';
         endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? (CONFIG.scenes[5].video.startsWith('asset/') ? CONFIG.scenes[5].video : `asset/${CONFIG.scenes[5].video}`) : 'asset/end.mp4';
         endVideo.playsInline = true;
-        endVideo.muted = true;
-        endVideo.autoplay = true;
+        endVideo.muted = true; // 保持静音以增加 autoplay 成功率
+        endVideo.autoplay = false; // 我们将通过代码在准备好后一并调用 play()
         endVideo.loop = false;
         endVideo.currentTime = 0;
         endVideo.style.zIndex = 50;
         this.appElement.appendChild(endVideo);
-        endVideo.play().catch(() => {});
 
-        // 循环播放 end 音效
-        if (this.endSound) {
+        const audio = this.endSound || null;
+
+        // 等待视频就绪（canplaythrough）
+        const waitVideoReady = new Promise((resolve, reject) => {
+            let settled = false;
+            const onLoaded = () => { if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(); };
+            const onError = (e) => { if (settled) return;
+                settled = true;
+                cleanup();
+                reject(new Error('endVideo error')); };
+            const to = setTimeout(() => { if (settled) return;
+                settled = true;
+                cleanup();
+                reject(new Error('endVideo timeout')); }, 30000);
+
+            function cleanup() { try { endVideo.removeEventListener('canplaythrough', onLoaded); } catch (e) {} try { endVideo.removeEventListener('error', onError); } catch (e) {}
+                clearTimeout(to); }
+            endVideo.addEventListener('canplaythrough', onLoaded);
+            endVideo.addEventListener('error', onError);
+        });
+
+        // 等待音频就绪（若不存在则立即通过）
+        const waitAudioReady = new Promise((resolve) => {
+            if (!audio) return resolve();
+            if (audio.readyState >= 3) return resolve();
+            const onCan = () => { cleanup();
+                resolve(); };
+            const to = setTimeout(() => { cleanup();
+                resolve(); }, 5000); // 小超时后继续（best-effort）
+            function cleanup() { try { audio.removeEventListener('canplaythrough', onCan); } catch (e) {}
+                clearTimeout(to); }
+            audio.addEventListener('canplaythrough', onCan);
+        });
+
+        // 当两者就绪后同时启动播放（尽量同步）
+        Promise.all([waitVideoReady, waitAudioReady]).then(async() => {
+            // 尝试同时播放视频和音频
             try {
-                this.endSound.loop = true;
-                this.endSound.currentTime = 0;
-                this.endSound.play().catch(() => {});
-            } catch (e) {}
-            const endTarget = (CONFIG.end && typeof CONFIG.end.volume === 'number') ? CONFIG.end.volume : 1;
-            this.fadeInAudio(this.endSound, endTarget, CONFIG.timings.bgmFade);
-        }
+                const playPromises = [endVideo.play()];
+                if (audio) {
+                    try {
+                        audio.loop = true;
+                        audio.currentTime = 0;
+                    } catch (e) {}
+                    playPromises.push(audio.play());
+                }
+                // 并发调用 play()
+                await Promise.all(playPromises.map(p => p && p.catch ? p.catch(err => { throw err; }) : p));
+            } catch (err) {
+                // 有时音频会因浏览器策略被拒绝播放；在此情况下继续播放视频，稍后可在用户交互时重试播放音频
+                console.warn('end media play rejected, attempting video-only start', err);
+                try { endVideo.play().catch(() => {}); } catch (e) {}
+            }
+
+            // 若音频已成功开始，淡入音量
+            if (audio && audio.volume === 0) {
+                const endTarget = (CONFIG.end && typeof CONFIG.end.volume === 'number') ? CONFIG.end.volume : 1;
+                this.fadeInAudio(audio, endTarget, CONFIG.timings.bgmFade);
+            }
+        }).catch((e) => {
+            console.error('end media readiness failed, starting what is available', e);
+            // 尝试至少播放视频
+            try { endVideo.play().catch(() => {}); } catch (err) {}
+            if (audio) {
+                try { audio.play().catch(() => {}); } catch (err) {}
+            }
+        });
 
         // 当视频接近结束时，暂停在最后一帧并保持画面
         const onTimeUpdate = () => {
