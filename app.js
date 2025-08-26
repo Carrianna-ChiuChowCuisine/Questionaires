@@ -17,17 +17,7 @@ class ProposalApp {
                     return; // 停止继续预下载后续场景
                 }
             }
-
             // 全部场景完成后再预下载 end 资源（若存在）
-            if (CONFIG.assets && CONFIG.assets.end) {
-                try {
-                    console.log(`[场景预下载] 开始下载 end 资源: ${CONFIG.assets.end}`);
-                    await ProposalApp._preloadAsset(CONFIG.assets.end);
-                    console.log(`[场景预下载] end 资源下载完成: ${CONFIG.assets.end}`);
-                } catch (e) {
-                    console.error('[场景预下载] end 资源下载失败', e);
-                }
-            }
         })();
     }
 
@@ -37,18 +27,20 @@ class ProposalApp {
         const scene = CONFIG.scenes[sceneIndex];
         if (!scene) return resources;
 
-        // 视频资源：scene.video 指向 CONFIG.assets 的 key
-        if (scene.video && CONFIG.assets && CONFIG.assets[scene.video]) {
-            resources.push(CONFIG.assets[scene.video]);
+        // 优先使用 CONFIG.assets 按幕提供的资源列表（现在 CONFIG.assets 为数组，每个元素为该幕资源列表）
+        if (Array.isArray(CONFIG.assets) && CONFIG.assets[sceneIndex]) {
+            CONFIG.assets[sceneIndex].forEach(fname => {
+                if (!fname) return;
+                const p = fname.startsWith('asset/') ? fname : `asset/${fname}`;
+                resources.push(p);
+            });
         }
 
-        // 背景图（通常是文件名，如 Q1bg.jpg）
+        // 兼容：若 scene 中仍指定 bg 或 optionsfont，确保包含
         if (scene.bg) {
             const bg = scene.bg.startsWith('asset/') ? scene.bg : `asset/${scene.bg}`;
             resources.push(bg);
         }
-
-        // 选项图标（svg/png 等）
         if (Array.isArray(scene.optionsfont)) {
             scene.optionsfont.forEach(f => {
                 if (!f) return;
@@ -61,14 +53,42 @@ class ProposalApp {
         return Array.from(new Set(resources));
     }
 
+    // 在 CONFIG.assets 中查找某个文件名并返回带前缀的路径（asset/filename）
+    static _findAsset(filename) {
+        if (!filename) return null;
+        if (!Array.isArray(CONFIG.assets)) return filename.startsWith('asset/') ? filename : `asset/${filename}`;
+        for (const group of CONFIG.assets) {
+            if (!Array.isArray(group)) continue;
+            for (const f of group) {
+                if (!f) continue;
+                if (f === filename || f.endsWith(filename)) {
+                    return f.startsWith('asset/') ? f : `asset/${f}`;
+                }
+            }
+        }
+        // fallback：直接加前缀
+        return filename.startsWith('asset/') ? filename : `asset/${filename}`;
+    }
+
     // 为指定场景顺序预下载资源（返回 Promise）
     static preloadResourcesForScene(sceneIndex) {
-        const resources = ProposalApp._resourcesForScene(sceneIndex);
-        if (!resources || resources.length === 0) return Promise.resolve();
+        if (!ProposalApp._scenePreloadPromises) ProposalApp._scenePreloadPromises = {};
+        if (ProposalApp._scenePreloadPromises[sceneIndex]) return ProposalApp._scenePreloadPromises[sceneIndex];
 
-        // 顺序/并行都可以，这里对单个场景内部采用并行下载，但场景之间串行
+        const resources = ProposalApp._resourcesForScene(sceneIndex);
+        if (!resources || resources.length === 0) {
+            ProposalApp._scenePreloadPromises[sceneIndex] = Promise.resolve();
+            return ProposalApp._scenePreloadPromises[sceneIndex];
+        }
+
+        // 幕内资源并行下载，幕间由调用方串行控制
         const promises = resources.map(src => ProposalApp._preloadAsset(src));
-        return Promise.all(promises).then(() => {});
+        ProposalApp._scenePreloadPromises[sceneIndex] = Promise.all(promises).then(() => {
+            // 记录已完成的资源集合，便于运行时快速判断
+            if (!ProposalApp._preloaded) ProposalApp._preloaded = new Set();
+            resources.forEach(r => ProposalApp._preloaded.add(r));
+        });
+        return ProposalApp._scenePreloadPromises[sceneIndex];
     }
 
     // 通用资源预下载：video/audio/image 等，开始/完成时打印日志
@@ -163,7 +183,7 @@ class ProposalApp {
         this.audioContext = null;
         this.bgm = null;
         this.clickSound = null;
-        this.currentVideo = null;
+        // this.currentVideo = null; // 已移除：不再维护全局 currentVideo 引用
         this.isTransitioning = false;
         this.isAnimating = false; // 新增：动画状态标志
         this.appElement = document.getElementById('app');
@@ -180,8 +200,7 @@ class ProposalApp {
             await this.preloadAudioAssets();
             this.setupAudio();
             this.startApp();
-            // 视频在后台并行预加载，scene4 完成后会触发 end.mp4 的预加载
-            this.preloadVideosInBackground();
+            // 视频预下载由 DOMContentLoaded 时的 eagerDownloadAllVideos 负责（按幕串行）
         } catch (error) {
             console.error('初始化失败:', error);
             this.showError('加载失败，请刷新重试');
@@ -204,56 +223,33 @@ class ProposalApp {
         document.documentElement.style.setProperty('--text-font-size', (CONFIG.style && CONFIG.style.fontSize && CONFIG.style.fontSize.text) ? CONFIG.style.fontSize.text : '18px');
     }
 
-    async preloadAssets() {
-        // 这个方法已弃用：保留为空以兼容旧调用
-        // 请使用 preloadAudioAssets() 和 preloadVideosInBackground()
-        return;
-    }
-
     // 仅预加载音频资源（立即返回，保证音频对象可用）
     async preloadAudioAssets() {
         // 预加载音频文件
-        this.bgm = new Audio(CONFIG.assets.bgm);
+        const bgmPath = ProposalApp._findAsset('bgm.mp3');
+        const clickPath = ProposalApp._findAsset('click.mp3');
+        const endPath = ProposalApp._findAsset('end.mp3');
+        const questionBgmPath = ProposalApp._findAsset('questionbgm.mp3');
+
+        this.bgm = new Audio(bgmPath);
         this.bgm.loop = true;
         this.bgm.volume = 0;
         this.bgm.playbackRate = 1;
-
-        this.clickSound = new Audio(CONFIG.assets.click);
+        this.clickSound = new Audio(clickPath);
         this.clickSound.volume = 1;
         this.clickSound.playbackRate = 1;
 
         // 预加载 end 音效（不自动播放、初始静音）
-        this.endSound = new Audio(CONFIG.assets.end);
+        this.endSound = new Audio(endPath);
         this.endSound.volume = 0;
         this.endSound.loop = false;
 
-        this.questionBgm = new Audio(CONFIG.assets.questionbgm);
+        this.questionBgm = new Audio(questionBgmPath);
         this.questionBgm.loop = true;
         this.questionBgm.volume = 0;
 
         // 返回已完成的 Promise，以便 await 使用
         return Promise.resolve();
-    }
-
-    // 在后台并行预加载场景视频；在 scene4 完成后开始预加载 end.mp4
-    preloadVideosInBackground() {
-        try {
-            const p1 = this.preloadVideo(CONFIG.assets.scene1);
-            const p2 = this.preloadVideo(CONFIG.assets.scene2);
-            const p3 = this.preloadVideo(CONFIG.assets.scene3);
-            const p4 = this.preloadVideo(CONFIG.assets.scene4);
-            // 当 scene4 下载完成后再开始下载 end.mp4
-            p4.then(() => {
-                // 开始预加载 end.mp4
-                this.preloadVideo('asset/end.mp4').then(() => {
-                    console.log('[视频预下载] end.mp4 已完成');
-                }).catch(() => {});
-            }).catch(() => {});
-            // 可选：记录这些 promise
-            this._videoPreloads = [p1, p2, p3, p4];
-        } catch (e) {
-            console.warn('预加载视频后台任务启动失败', e);
-        }
     }
 
     // 渐强播放任意 HTMLAudioElement（以墙钟时间为准）
@@ -283,13 +279,8 @@ class ProposalApp {
     }
 
     preloadVideo(src) {
-        return new Promise((resolve) => {
-            const video = document.createElement('video');
-            video.src = src;
-            video.preload = 'metadata';
-            video.onloadedmetadata = () => resolve();
-            video.onerror = () => resolve(); // 即使失败也继续
-        });
+        // 已弃用：保留兼容性占位符
+        return Promise.resolve();
     }
 
     setupAudio() {
@@ -300,7 +291,15 @@ class ProposalApp {
     }
 
     startApp() {
-        this.showWelcomeScene();
+        // 确保第0幕资源先完成预下载再展示（以获得更流畅的体验）
+        (async() => {
+            try {
+                await ProposalApp.preloadResourcesForScene(0);
+            } catch (e) {
+                console.warn('第0幕资源预下载失败，仍尝试启动界面', e);
+            }
+            this.showWelcomeScene();
+        })();
     }
 
     showWelcomeScene() {
@@ -494,8 +493,6 @@ class ProposalApp {
 
     handleOptionClick(sceneIndex, optionIndex) {
         // 选择题点击不播放click音效
-
-
         // 开始动画，禁用点击
         this.isAnimating = true;
 
@@ -522,7 +519,8 @@ class ProposalApp {
         const scene = CONFIG.scenes[sceneIndex];
         const video = document.createElement('video');
         video.className = 'video-background';
-        video.src = CONFIG.assets[scene.video];
+        // scene.video 已含文件名（例如 scene1.mp4），按新的 config.assets 结构使用 asset/ 前缀
+        video.src = scene.video && scene.video.startsWith('asset/') ? scene.video : `asset/${scene.video}`;
         video.muted = false;
         video.playsInline = true;
         video.currentTime = 0;
@@ -535,8 +533,6 @@ class ProposalApp {
         } else {
             this.appElement.appendChild(video);
         }
-
-        // 移除视频蒙版淡入淡出效果
 
         // 开始播放视频
         video.play();
@@ -624,7 +620,7 @@ class ProposalApp {
         // 创建并播放 end 视频（不循环），播放到最后一帧时停止在最后一帧
         const endVideo = document.createElement('video');
         endVideo.className = 'video-background';
-        endVideo.src = 'asset/end.mp4';
+        endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? (CONFIG.scenes[5].video.startsWith('asset/') ? CONFIG.scenes[5].video : `asset/${CONFIG.scenes[5].video}`) : 'asset/end.mp4';
         endVideo.playsInline = true;
         endVideo.muted = true;
         endVideo.autoplay = true;
@@ -698,8 +694,17 @@ class ProposalApp {
         }, CONFIG.timings.blackMask.fadeIn);
     }
 
-    loadScene(sceneIndex) {
+    async loadScene(sceneIndex) {
         const scene = CONFIG.scenes[sceneIndex];
+
+        // 在展示场景前，确保该场景资源已完成预下载
+        try {
+            await ProposalApp.preloadResourcesForScene(sceneIndex);
+        } catch (e) {
+            console.error(`加载场景 ${sceneIndex} 的资源失败，无法进入该场景`, e);
+            this.showError('资源加载失败，请刷新重试');
+            return;
+        }
 
         if (scene.type === 'question') {
             this.showQuestionScene(sceneIndex);
@@ -881,7 +886,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // 开发/调试：在控制台中调用 window.jumpToScene(n) 可直接跳转到第 n 幕（0 计数）
-window.jumpToScene = function(n) {
+window.goto = function(n) {
     const app = window.proposalApp;
     if (!app) return console.warn('app 未初始化');
     if (typeof n !== 'number' || n < 0 || n >= CONFIG.scenes.length) return console.warn('scene index invalid');

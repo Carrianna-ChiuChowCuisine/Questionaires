@@ -1,16 +1,13 @@
 window.CONFIG = {
     // 资源路径
-    assets: {
-        bgm: 'asset/bgm.mp3',
-        click: 'asset/click.mp3',
-        questionbgm: 'asset/questionbgm.mp3',
-        end: 'asset/end.mp3',
-        scene1: 'asset/scene1.mp4',
-        scene2: 'asset/scene2.mp4',
-        scene3: 'asset/scene3.mp4',
-        scene4: 'asset/scene4.mp4',
-        font: 'asset/handwriting.ttf'
-    },
+    assets: [
+        ['bgm.mp3', 'click.mp3', 'questionbgm.mp3'],
+        ['Q1bg.jpg', 'Q1_1.svg', 'Q1_2.svg', 'Q1_3.svg', 'scene1.mp4'],
+        ['Q2bg.jpg', 'Q2_1.svg', 'Q2_2.svg', 'Q2_3.svg', 'scene2.mp4'],
+        ['Q3bg.jpg', 'Q3_1.svg', 'Q3_2.svg', 'Q3_3.svg', 'scene3.mp4'],
+        ['Q4bg.jpg', 'Q4_1.svg', 'Q4_2.svg', 'Q4_3.svg', 'scene4.mp4'],
+        ['end.mp3', 'end.mp4']
+    ],
 
     // 每幕配置
     scenes: [
@@ -19,30 +16,31 @@ window.CONFIG = {
             type: 'welcome',
             texts: [
                 { content: '打开音效体验更佳', delay: 0, waitForClick: true },
-                { content: '敬所有跨越山海的奔赴', delay: 0, waitForClick: true },
-                { content: '无畏岁月的誓言', delay: 0, waitForClick: true },
-                { content: '祝爱情永不落幕', delay: 0, waitForClick: true }
+                { content: '你好', delay: 0, waitForClick: true },
+                { content: '我在此等候你多时了', delay: 0, waitForClick: true },
+                { content: '请与我共赴这段旅程吧', delay: 0, waitForClick: true }
+            ],
+            resources: [
+                'bgm.mp3', 'click.mp3'
             ]
+
         },
         // 第1幕
         {
             type: 'question',
-            video: 'scene1',
+            video: 'scene1.mp4',
             question: '你们第一次踏在同一条小路上时，你脚下那双鞋曾经走过最多的地方是哪里？',
             bg: 'Q1bg.jpg',
             options: [
                 '校园雨后松软的红土田径场',
                 '晚风吹来青苔香气的河边小径',
                 '城市凌晨两点还亮着灯的柏油马路'
-            ],
-            optionsfont: [
-                'Q1_1.svg', 'Q1_2.svg', 'Q1_3.svg'
             ]
         },
         // 第2幕
         {
             type: 'question',
-            video: 'scene2',
+            video: 'scene2.mp4',
             question: '当你们一起爬上高塔，最先闪过脑海的念头是什么',
             bg: 'Q2bg.jpg',
             options: [
@@ -57,7 +55,7 @@ window.CONFIG = {
         // 第3幕
         {
             type: 'question',
-            video: 'scene3',
+            video: 'scene3.mp4',
             question: '当平静突然坍塌，哪一瞬间你最想听到TA的声音？',
             bg: 'Q3bg.jpg',
             options: [
@@ -72,7 +70,7 @@ window.CONFIG = {
         // 第4幕
         {
             type: 'question',
-            video: 'scene4',
+            video: 'scene4.mp4',
             question: '当你们终于安定下来，你最想先往客厅摆哪件小东西？',
             bg: 'Q4bg.jpg',
             options: [
@@ -87,15 +85,7 @@ window.CONFIG = {
         // 第5幕：求婚
         {
             type: 'proposal',
-            texts: [
-                { content: '这些是我们一起走过的故事', delay: 2000 },
-                { content: '我希望剩下的路 往后的余生', delay: 2000 },
-                { content: '都能有你在侧 与你同行', delay: 2000 },
-                { content: '你愿意让我成为今后每一天的固定选项吗？', delay: 2000 },
-                { content: 'By 爱你的王天昊', delay: 2000 },
-                { content: '记 2025年08月28日', delay: 2000 },
-                { content: '祝 我们的爱情永不落幕', delay: 2000 },
-            ]
+            video: 'end.mp4',
         }
     ],
 
