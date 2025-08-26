@@ -65,6 +65,11 @@ class ProposalApp {
         document.documentElement.style.setProperty('--proposal-fade-out', CONFIG.timings.proposalFadeOut + 'ms');
         // 设置求婚页字体大小
         document.documentElement.style.setProperty('--proposal-font-size', CONFIG.proposal && CONFIG.proposal.fontSize ? CONFIG.proposal.fontSize : CONFIG.style.fontSize.proposal);
+        // 全局文字大小变量（可由 config.style.fontSize 覆盖）
+        document.documentElement.style.setProperty('--title-font-size', (CONFIG.style && CONFIG.style.fontSize && CONFIG.style.fontSize.title) ? CONFIG.style.fontSize.title : '24px');
+        document.documentElement.style.setProperty('--question-font-size', (CONFIG.style && CONFIG.style.fontSize && CONFIG.style.fontSize.question) ? CONFIG.style.fontSize.question : '20px');
+        document.documentElement.style.setProperty('--option-font-size', (CONFIG.style && CONFIG.style.fontSize && CONFIG.style.fontSize.option) ? CONFIG.style.fontSize.option : '16px');
+        document.documentElement.style.setProperty('--text-font-size', (CONFIG.style && CONFIG.style.fontSize && CONFIG.style.fontSize.text) ? CONFIG.style.fontSize.text : '18px');
     }
 
     async preloadAssets() {
@@ -238,7 +243,19 @@ class ProposalApp {
         const scene = CONFIG.scenes[sceneIndex];
         this.appElement.innerHTML = '';
 
-        // 延迟创建视频：在选项点击后再创建与加载
+        // 背景图片
+        let bgDiv = null;
+        if (scene.bg) {
+            bgDiv = document.createElement('div');
+            bgDiv.className = 'question-bg';
+            bgDiv.style.backgroundImage = `url('asset/${scene.bg}')`;
+            // 明确设置过渡时长，确保与配置同步
+            bgDiv.style.transition = `opacity ${CONFIG.timings.questionFadeOut}ms ease-in-out`;
+            bgDiv.style.willChange = 'opacity';
+            this.appElement.appendChild(bgDiv);
+            // 使用类控制可见性，避免内联样式冲突
+            setTimeout(() => { bgDiv.classList.add('visible'); }, 50);
+        }
 
         // 创建问题容器
         const questionContainer = document.createElement('div');
@@ -260,12 +277,40 @@ class ProposalApp {
         scene.options.forEach((option, index) => {
             const optionBtn = document.createElement('button');
             optionBtn.className = 'option-btn';
-            optionBtn.textContent = option;
+
+            // 使用config中的svg文件作为icon
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'option-icon';
+            if (scene.optionsfont && scene.optionsfont[index]) {
+                const img = document.createElement('img');
+                img.src = `asset/${scene.optionsfont[index]}`;
+                img.alt = '';
+                img.style.width = '32px';
+                img.style.height = '32px';
+                iconSpan.appendChild(img);
+            }
+            optionBtn.appendChild(iconSpan);
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'option-text';
+            textSpan.textContent = option;
+            optionBtn.appendChild(textSpan);
 
             optionBtn.addEventListener('click', () => {
-                // 如果正在动画中，忽略点击
                 if (this.isAnimating) return;
-                this.handleOptionClick(sceneIndex, index);
+                // 选项和背景一起淡出：直接淡出 questionContainer
+                questionContainer.classList.add('fade-out');
+                if (bgDiv) {
+                    // 强制使用 inline opacity 触发过渡，确保在各种浏览器一致工作
+                    bgDiv.style.transition = `opacity ${CONFIG.timings.questionFadeOut}ms ease-in-out`;
+                    // remove visible class if present
+                    bgDiv.classList.remove('visible');
+                    // 设置为透明，触发过渡
+                    setTimeout(() => { bgDiv.style.opacity = '0'; }, 10);
+                }
+                setTimeout(() => {
+                    this.handleOptionClick(sceneIndex, index);
+                }, CONFIG.timings.questionFadeOut);
             });
 
             optionsContainer.appendChild(optionBtn);
@@ -301,12 +346,20 @@ class ProposalApp {
     handleOptionClick(sceneIndex, optionIndex) {
         // 选择题点击不播放click音效
 
+
         // 开始动画，禁用点击
         this.isAnimating = true;
 
         // 隐藏问题容器
         const questionContainer = document.querySelector('.question-container');
-        questionContainer.classList.add('fade-out');
+        if (questionContainer) questionContainer.classList.add('fade-out');
+
+        // 淡出背景图片（如果有） — 由点击时已处理，这里仅确保存在时短延迟移除DOM
+        const bgDiv = document.querySelector('.question-bg');
+        if (bgDiv) {
+            // 在稍后清理时移除
+            setTimeout(() => { try { bgDiv.remove(); } catch (e) {} }, CONFIG.timings.questionFadeOut + 50);
+        }
 
         // 减弱BGM
         // 离开问卷场景时，淡出问卷 BGM 并恢复主 BGM（如果需要）
@@ -412,96 +465,51 @@ class ProposalApp {
     }
 
     showProposalScene() {
+        // 第5幕：直接播放 end 视频与循环音效（不展示文字）
         this.appElement.innerHTML = '';
 
-        // 减弱全局音量
+        // 停止/减弱其他 BGM
         this.fadeOutBGM();
+        if (this.questionBgm) this.fadeOutAudioVolume(this.questionBgm, CONFIG.timings.bgmFade);
 
-        const proposalContainer = document.createElement('div');
-        proposalContainer.className = 'proposal-container';
+        // 创建并播放 end 视频（不循环），播放到最后一帧时停止在最后一帧
+        const endVideo = document.createElement('video');
+        endVideo.className = 'video-background';
+        endVideo.src = 'asset/end.mp4';
+        endVideo.playsInline = true;
+        endVideo.muted = true;
+        endVideo.autoplay = true;
+        endVideo.loop = false;
+        endVideo.currentTime = 0;
+        endVideo.style.zIndex = 50;
+        this.appElement.appendChild(endVideo);
+        endVideo.play().catch(() => {});
 
-        const proposalTexts = CONFIG.scenes[5].texts;
-        let currentTextIndex = 0;
+        // 循环播放 end 音效
+        if (this.endSound) {
+            try {
+                this.endSound.loop = true;
+                this.endSound.currentTime = 0;
+                this.endSound.play().catch(() => {});
+            } catch (e) {}
+            const endTarget = (CONFIG.end && typeof CONFIG.end.volume === 'number') ? CONFIG.end.volume : 1;
+            this.fadeInAudio(this.endSound, endTarget, CONFIG.timings.bgmFade);
+        }
 
-        const showNextText = () => {
-            if (currentTextIndex >= proposalTexts.length) {
-                return;
-            }
-
-            const textData = proposalTexts[currentTextIndex];
-            const textElement = document.createElement('div');
-            textElement.className = 'proposal-text';
-            textElement.textContent = textData.content;
-
-            proposalContainer.appendChild(textElement);
-
-            // 淡入效果
-            this.isAnimating = true; // 开始淡入动画
-            const propFadeIn = (CONFIG.proposal && CONFIG.proposal.fadeIn) || CONFIG.timings.proposalFadeIn;
-            const propFadeOut = (CONFIG.proposal && CONFIG.proposal.fadeOut) || CONFIG.timings.proposalFadeOut;
-            setTimeout(() => {
-                textElement.classList.add('fade-in');
-            }, textData.delay || 0);
-
-            // 在第一段文字出现时，播放 end 音效并渐强
-            if (currentTextIndex === 0 && this.endSound) {
+        // 当视频接近结束时，暂停在最后一帧并保持画面
+        const onTimeUpdate = () => {
+            if (!isFinite(endVideo.duration) || endVideo.duration <= 0) return;
+            const remaining = endVideo.duration - endVideo.currentTime;
+            if (remaining <= 0.05) {
                 try {
-                    this.endSound.currentTime = 0;
-                    this.endSound.play().catch(() => {});
+                    endVideo.pause();
+                    // 尝试定位到最后一帧
+                    endVideo.currentTime = Math.max(0, endVideo.duration - 0.02);
                 } catch (e) {}
-                const endTarget = (CONFIG.end && typeof CONFIG.end.volume === 'number') ? CONFIG.end.volume : 1;
-                this.fadeInAudio(this.endSound, endTarget, CONFIG.timings.bgmFade);
-            }
-
-            const isLast = currentTextIndex === proposalTexts.length - 1;
-
-            if (!isLast) {
-                // 第4句（index === 3）要求用户点击屏幕才继续，其他文本自动淡出
-                if (currentTextIndex === 3) {
-                    // 在淡入完成后启用点击监听
-                    setTimeout(() => {
-                        // 允许点击触发下一步
-                        this.isAnimating = false;
-                        const handleScreenClick = () => {
-                            if (this.isAnimating) return;
-                            this.isAnimating = true; // 开始淡出动画
-                            textElement.classList.add('fade-out');
-                            setTimeout(() => {
-                                textElement.remove();
-                                currentTextIndex++;
-                                this.isAnimating = false; // 动画结束
-                                showNextText();
-                            }, propFadeOut);
-                            document.removeEventListener('click', handleScreenClick);
-                        };
-
-                        document.addEventListener('click', handleScreenClick, { once: true });
-                    }, (textData.delay || 0) + propFadeIn + 50);
-                } else {
-                    // 前几段文字自动淡出
-                    setTimeout(() => {
-                        this.isAnimating = true; // 开始淡出动画
-                        textElement.classList.add('fade-out');
-                        setTimeout(() => {
-                            textElement.remove();
-                            currentTextIndex++;
-                            this.isAnimating = false; // 动画结束
-                            showNextText();
-                        }, propFadeOut);
-                    }, (textData.delay || 0) + CONFIG.timings.textStay + propFadeIn);
-                }
-            } else {
-                // 最后一段仅淡入并保持展示，结束整体流程
-                setTimeout(() => {
-                    this.isAnimating = false; // 淡入动画完成
-                    // 停止后续场景切换逻辑
-                    this.isTransitioning = true;
-                }, (textData.delay || 0) + propFadeIn + 100);
+                endVideo.removeEventListener('timeupdate', onTimeUpdate);
             }
         };
-
-        showNextText();
-        this.appElement.appendChild(proposalContainer);
+        endVideo.addEventListener('timeupdate', onTimeUpdate);
     }
 
     transitionToNextScene() {
@@ -722,6 +730,16 @@ document.addEventListener('DOMContentLoaded', () => {
     ProposalApp.eagerDownloadAllVideos();
     window.proposalApp = new ProposalApp();
 });
+
+// 开发/调试：在控制台中调用 window.jumpToScene(n) 可直接跳转到第 n 幕（0 计数）
+window.jumpToScene = function(n) {
+    const app = window.proposalApp;
+    if (!app) return console.warn('app 未初始化');
+    if (typeof n !== 'number' || n < 0 || n >= CONFIG.scenes.length) return console.warn('scene index invalid');
+    app.currentScene = n;
+    app.loadScene(n);
+    console.info(`jumped to scene ${n}`);
+};
 
 // 全局点击事件拦截器，防止动画期间被点击打断
 document.addEventListener('click', (e) => {

@@ -29,10 +29,14 @@ window.CONFIG = {
             type: 'question',
             video: 'scene1',
             question: '你们第一次踏在同一条小路上时，你脚下那双鞋曾经走过最多的地方是哪里？',
+            bg: 'Q1bg.jpg',
             options: [
                 '校园雨后松软的红土田径场',
                 '晚风吹来青苔香气的河边小径',
                 '城市凌晨两点还亮着灯的柏油马路'
+            ],
+            optionsfont: [
+                'Q1_1.svg', 'Q1_2.svg', 'Q1_3.svg'
             ]
         },
         // 第2幕
@@ -40,10 +44,14 @@ window.CONFIG = {
             type: 'question',
             video: 'scene2',
             question: '当你们一起爬上高塔，最先闪过脑海的念头是什么',
+            bg: 'Q2bg.jpg',
             options: [
                 '曾遥不可及的地方竟已在脚下',
                 '风吹得刚刚好 似乎在庆祝',
                 '告诉最牵挂的人 我平安'
+            ],
+            optionsfont: [
+                'Q2_1.svg', 'Q2_2.svg', 'Q2_3.svg'
             ]
         },
         // 第3幕
@@ -51,10 +59,14 @@ window.CONFIG = {
             type: 'question',
             video: 'scene3',
             question: '当平静突然坍塌，哪一瞬间你最想听到TA的声音？',
+            bg: 'Q3bg.jpg',
             options: [
                 '发着高烧 却找不到一颗退烧药',
                 '加班到深夜 末班车刚好开远',
                 '突然被告知裁员的下午'
+            ],
+            optionsfont: [
+                'Q3_1.svg', 'Q3_2.svg', 'Q3_3.svg'
             ]
         },
         // 第4幕
@@ -62,10 +74,14 @@ window.CONFIG = {
             type: 'question',
             video: 'scene4',
             question: '当你们终于安定下来，你最想先往客厅摆哪件小东西？',
+            bg: 'Q4bg.jpg',
             options: [
                 '一起存钱买的第一张唱片',
                 '一起旅行买来的冰箱贴',
                 '用拍立得打印的合照'
+            ],
+            optionsfont: [
+                'Q4_1.svg', 'Q4_2.svg', 'Q4_3.svg'
             ]
         },
         // 第5幕：求婚
@@ -78,6 +94,7 @@ window.CONFIG = {
                 { content: '你愿意让我成为今后每一天的固定选项吗？', delay: 2000 },
                 { content: 'By 爱你的王天昊', delay: 2000 },
                 { content: '记 2025年08月28日', delay: 2000 },
+                { content: '祝 我们的爱情永不落幕', delay: 2000 },
             ]
         }
     ],
