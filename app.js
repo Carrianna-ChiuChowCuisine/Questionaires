@@ -31,20 +31,20 @@ class ProposalApp {
         if (Array.isArray(CONFIG.assets) && CONFIG.assets[sceneIndex]) {
             CONFIG.assets[sceneIndex].forEach(fname => {
                 if (!fname) return;
-                const p = ProposalApp._findAsset(fname);
+                const p = fname.startsWith('asset/') ? fname : `asset/${fname}`;
                 resources.push(p);
             });
         }
 
         // 兼容：若 scene 中仍指定 bg 或 optionsfont，确保包含
         if (scene.bg) {
-            const bg = ProposalApp._findAsset(scene.bg);
+            const bg = scene.bg.startsWith('asset/') ? scene.bg : `asset/${scene.bg}`;
             resources.push(bg);
         }
         if (Array.isArray(scene.optionsfont)) {
             scene.optionsfont.forEach(f => {
                 if (!f) return;
-                const p = ProposalApp._findAsset(f);
+                const p = f.startsWith('asset/') ? f : `asset/${f}`;
                 resources.push(p);
             });
         }
@@ -53,25 +53,21 @@ class ProposalApp {
         return Array.from(new Set(resources));
     }
 
-    // 返回 release 资源基地址（方便未来改 tag）
-    static _assetBase() {
-        return 'http://t1m5ir6s4.hn-bkt.clouddn.com/asset/';
-    }
-
-    // 在 CONFIG.assets 中查找某个文件名并返回完整的 URL（指向 GitHub release）
+    // 在 CONFIG.assets 中查找某个文件名并返回带前缀的路径（asset/filename）
     static _findAsset(filename) {
         if (!filename) return null;
-        // 如果已是完整 URL，则原样返回
-        if (/^https?:\/\//i.test(filename) || filename.startsWith('//')) return filename;
-
-        // 取文件名的最后一部分作为 release 中的文件名
-        const baseName = filename.split('/').pop();
-        // 构建 release URL
-        try {
-            return ProposalApp._assetBase() + encodeURIComponent(baseName);
-        } catch (e) {
-            return ProposalApp._assetBase() + baseName;
+        if (!Array.isArray(CONFIG.assets)) return filename.startsWith('asset/') ? filename : `asset/${filename}`;
+        for (const group of CONFIG.assets) {
+            if (!Array.isArray(group)) continue;
+            for (const f of group) {
+                if (!f) continue;
+                if (f === filename || f.endsWith(filename)) {
+                    return f.startsWith('asset/') ? f : `asset/${f}`;
+                }
+            }
         }
+        // fallback：直接加前缀
+        return filename.startsWith('asset/') ? filename : `asset/${filename}`;
     }
 
     // 在页面右上角短暂弹出可自动消失的通知（支持多条堆叠，默认 1s 后消失）
@@ -672,7 +668,7 @@ class ProposalApp {
         if (scene.bg) {
             bgDiv = document.createElement('div');
             bgDiv.className = 'question-bg';
-            bgDiv.style.backgroundImage = `url('${ProposalApp._findAsset(scene.bg)}')`;
+            bgDiv.style.backgroundImage = `url('asset/${scene.bg}')`;
             // 明确设置过渡时长，确保与配置同步
             bgDiv.style.transition = `opacity ${CONFIG.timings.questionFadeOut}ms ease-in-out`;
             bgDiv.style.willChange = 'opacity';
@@ -816,8 +812,8 @@ class ProposalApp {
         const scene = CONFIG.scenes[sceneIndex];
         const video = document.createElement('video');
         video.className = 'video-background';
-        // scene.video 已含文件名（例如 scene1.mp4），使用 release URL
-        video.src = scene.video ? ProposalApp._findAsset(scene.video) : null;
+        // scene.video 已含文件名（例如 scene1.mp4），按新的 config.assets 结构使用 asset/ 前缀
+        video.src = scene.video && scene.video.startsWith('asset/') ? scene.video : `asset/${scene.video}`;
         video.muted = false;
         video.playsInline = true;
         video.currentTime = 0;
@@ -917,7 +913,7 @@ class ProposalApp {
         // 创建 end 视频与音效，并尝试在两者都就绪后同时开始播放以保证同步
         const endVideo = document.createElement('video');
         endVideo.className = 'video-background';
-        endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? ProposalApp._findAsset(CONFIG.scenes[5].video) : ProposalApp._findAsset('end.mp4');
+        endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? (CONFIG.scenes[5].video.startsWith('asset/') ? CONFIG.scenes[5].video : `asset/${CONFIG.scenes[5].video}`) : 'asset/end.mp4';
         endVideo.playsInline = true;
         endVideo.muted = true; // 保持静音以增加 autoplay 成功率
         endVideo.autoplay = false; // 我们将通过代码在准备好后一并调用 play()

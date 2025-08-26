@@ -29,7 +29,7 @@ window.CONFIG = {
         {
             type: 'question',
             video: 'scene1.mp4',
-            question: '你们第一次踏在同一条小路上时，你脚下那双鞋曾经走过最多的地方是哪里？',
+            question: '当你们第一次并肩而行，脚下那双鞋亲吻了哪片土地？',
             bg: 'Q1bg.jpg',
             options: [
                 '校园雨后松软的红土田径场',
@@ -141,7 +141,7 @@ CONFIG.end = {
 // 调试开关：控制左上角资源监控与下载完成的页面通知
 CONFIG.debug = {
     // 是否在左上角显示资源监控面板（每秒更新）
-    enableResourceMonitor: true,
+    enableResourceMonitor: false,
     // 是否在 mp4 预下载完成/失败/超时时显示短时通知
-    enableDownloadNotices: true
+    enableDownloadNotices: false
 };
