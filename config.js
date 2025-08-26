@@ -16,9 +16,9 @@ window.CONFIG = {
             type: 'welcome',
             texts: [
                 { content: '打开音效体验更佳', delay: 0, waitForClick: true },
-                { content: '你好', delay: 0, waitForClick: true },
-                { content: '我在此等候你多时了', delay: 0, waitForClick: true },
-                { content: '请与我共赴这段旅程吧', delay: 0, waitForClick: true }
+                { content: '敬所有跨越山海的奔赴', delay: 0, waitForClick: true },
+                { content: '无畏岁月的誓言', delay: 0, waitForClick: true },
+                { content: '祝爱情永不落幕', delay: 0, waitForClick: true }
             ],
             resources: [
                 'bgm.mp3', 'click.mp3'
@@ -133,4 +133,12 @@ CONFIG.proposal = {
 // end 音效配置：默认音量为原始值的 0.5
 CONFIG.end = {
     volume: 0.5
+};
+
+// 调试开关：控制左上角资源监控与下载完成的页面通知
+CONFIG.debug = {
+    // 是否在左上角显示资源监控面板（每秒更新）
+    enableResourceMonitor: true,
+    // 是否在 mp4 预下载完成/失败/超时时显示短时通知
+    enableDownloadNotices: true
 };

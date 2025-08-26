@@ -71,7 +71,7 @@ class ProposalApp {
     }
 
     // 在页面右上角短暂弹出可自动消失的通知（支持多条堆叠，默认 1s 后消失）
-    static _showTransientNotice(message, timeout = 2000) {
+    static _showTransientNotice(message, timeout = 1000) {
         try {
             const containerId = 'transient-notice-container';
             let container = document.getElementById(containerId);
@@ -168,7 +168,7 @@ class ProposalApp {
 
     // 通用资源预下载：video/audio/image 等，开始/完成时打印日志
     static _preloadAsset(src) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             if (!src) return resolve();
 
             // 规范化 src（相对路径不变）
@@ -177,50 +177,56 @@ class ProposalApp {
 
             // 视频
             if (/\.mp4(?:\?|$)/i.test(url)) {
+                // 不把预加载的视频元素附加到 DOM，以避免占用渲染/解码器资源
                 const video = document.createElement('video');
                 video.src = url;
                 video.preload = 'auto';
                 video.muted = true;
-                video.style.display = 'none';
                 video.setAttribute('playsinline', '');
                 video.setAttribute('webkit-playsinline', '');
-                document.body.appendChild(video);
 
                 let settled = false;
+                let to = null;
+
+                const cleanup = () => {
+                    try { video.removeEventListener('canplaythrough', onLoaded); } catch (e) {}
+                    try { video.removeEventListener('error', onError); } catch (e) {}
+                    try { if (to) clearTimeout(to); } catch (e) {}
+                    try { video.pause(); } catch (e) {}
+                    try { video.removeAttribute('src'); } catch (e) {}
+                    try { video.load(); } catch (e) {}
+                };
 
                 const onLoaded = () => {
                     if (settled) return;
                     settled = true;
                     console.log(`[预下载] 下载完成: ${url}`);
-                    try { ProposalApp._showTransientNotice(`视频已下载: ${url}`); } catch (e) {}
-                    video.removeEventListener('canplaythrough', onLoaded);
-                    video.removeEventListener('error', onError);
+                    try { if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) ProposalApp._showTransientNotice(`视频已下载: ${url}`); } catch (e) {}
+                    cleanup();
                     resolve();
                 };
 
                 const onError = (ev) => {
                     if (settled) return;
                     settled = true;
-                    video.removeEventListener('canplaythrough', onLoaded);
-                    video.removeEventListener('error', onError);
+                    cleanup();
                     console.error(`[预下载] 视频下载错误: ${url}`, ev);
-                    try { ProposalApp._showTransientNotice(`视频下载失败: ${url}`); } catch (e) {}
+                    try { if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) ProposalApp._showTransientNotice(`视频下载失败: ${url}`); } catch (e) {}
                     // mp4 必须成功，否则视为失败并拒绝，以便上层停止序列
-                    resolve(Promise.reject(new Error(`Video preload failed: ${url}`)));
+                    reject(new Error(`Video preload failed: ${url}`));
                 };
 
                 video.addEventListener('canplaythrough', onLoaded);
                 video.addEventListener('error', onError);
 
                 // 兜底超时：若超时也视为失败，触发 reject
-                const to = setTimeout(() => {
+                to = setTimeout(() => {
                     if (settled) return;
                     settled = true;
-                    try { video.removeEventListener('canplaythrough', onLoaded); } catch (e) {}
-                    try { video.removeEventListener('error', onError); } catch (e) {}
+                    cleanup();
                     console.error(`[预下载] 视频预下载超时: ${url}`);
-                    try { ProposalApp._showTransientNotice(`视频预下载超时: ${url}`); } catch (e) {}
-                    resolve(Promise.reject(new Error(`Video preload timeout: ${url}`)));
+                    try { if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) ProposalApp._showTransientNotice(`视频预下载超时: ${url}`); } catch (e) {}
+                    reject(new Error(`Video preload timeout: ${url}`));
                 }, 30000);
 
                 return;
@@ -228,14 +234,26 @@ class ProposalApp {
 
             // 图片 / svg
             if (/\.(png|jpe?g|gif|svg)(?:\?|$)/i.test(url)) {
-                const img = new Image();
+                let img = new Image();
                 img.src = url;
                 img.onload = () => {
                     console.log(`[预下载] 下载完成: ${url}`);
+                    // 释放引用，允许 GC 回收 DOM/内存
+                    try {
+                        img.onload = null;
+                        img.onerror = null;
+                    } catch (e) {}
+                    img = null;
                     resolve();
                 };
                 img.onerror = () => {
                     console.warn(`[预下载] 下载失败: ${url}`);
+                    try {
+                        img.onload = null;
+                        img.onerror = null;
+                    } catch (e) {}
+                    img = null;
+                    // 图片失败不视为致命错误，继续
                     resolve();
                 };
                 return;
@@ -243,16 +261,18 @@ class ProposalApp {
 
             // 其他（尝试用 fetch 快速触发下载，响应时认为完成）
             try {
-                fetch(url, { method: 'GET', mode: 'no-cors' }).then(() => {
+                fetch(url, { method: 'GET', mode: 'no-cors' }).then((resp) => {
+                    // 在 no-cors 下我们无法检查状态；把响应视为完成
                     console.log(`[预下载] 下载完成(fetch): ${url}`);
                     resolve();
-                }).catch(() => {
-                    console.warn(`[预下载] fetch 失败: ${url}`);
-                    resolve();
+                }).catch((err) => {
+                    console.warn(`[预下载] fetch 失败: ${url}`, err);
+                    // 若 fetch 失败，视为不可用，向上抛出以让序列决定是否停止
+                    reject(err);
                 });
             } catch (e) {
                 console.warn(`[预下载] 无法预下载: ${url}`);
-                resolve();
+                reject(e);
             }
         });
     }
@@ -269,8 +289,10 @@ class ProposalApp {
         // 设置CSS变量
         this.setCSSVariables();
 
-        // 启动资源监控器（左上角，移动端/桌面调试用）
-        ProposalApp._startResourceMonitor();
+        // 启动资源监控器（左上角，移动端/桌面调试用），受 CONFIG.debug 控制
+        if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableResourceMonitor) {
+            ProposalApp._startResourceMonitor();
+        }
 
         this.init();
     }
