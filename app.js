@@ -1,32 +1,161 @@
 // 求婚H5应用主逻辑
 class ProposalApp {
-    // DOM 加载后立即下载所有视频内容，弱网优化
+    // DOM 加载后按场景顺序下载每一幕需要的所有资源（串行），每个资源开始/完成都打印日志
     static eagerDownloadAllVideos() {
-        if (!window.CONFIG || !CONFIG.assets) return;
-        const videoKeys = ['scene1', 'scene2', 'scene3', 'scene4'];
-        videoKeys.forEach(key => {
-            const src = CONFIG.assets[key];
-            if (!src) return;
-            const video = document.createElement('video');
-            video.src = src;
-            video.preload = 'auto';
-            video.style.display = 'none';
-            video.muted = true;
-            video.setAttribute('playsinline', '');
-            video.setAttribute('webkit-playsinline', '');
-            video.setAttribute('preload', 'auto');
-            document.body.appendChild(video);
-            console.log(`[视频预下载] 开始下载: ${src}`);
-            const onLoaded = () => {
-                console.log(`[视频预下载] 下载完成: ${src}`);
-                video.removeEventListener('canplaythrough', onLoaded);
-                // 可选：下载完成后移除 video 节点，或保留以便后续复用
-            };
-            video.addEventListener('canplaythrough', onLoaded);
-            // 兜底：若 30s 还没 canplaythrough 也移除监听
-            setTimeout(() => {
-                video.removeEventListener('canplaythrough', onLoaded);
-            }, 30000);
+        if (!window.CONFIG || !Array.isArray(CONFIG.scenes)) return;
+
+        // 启动异步串行任务，但不阻塞调用者（调用方无需 await）
+        (async() => {
+            for (let i = 0; i < CONFIG.scenes.length; i++) {
+                console.log(`[场景预下载] 开始第 ${i} 幕资源预下载`);
+                try {
+                    // 严格等待该幕所有资源完成；若有 mp4 加载失败会抛出并终止序列
+                    await ProposalApp.preloadResourcesForScene(i);
+                    console.log(`[场景预下载] 第 ${i} 幕所有资源已完成`);
+                } catch (e) {
+                    console.error(`[场景预下载] 第 ${i} 幕资源预下载失败，终止后续预下载`, e);
+                    return; // 停止继续预下载后续场景
+                }
+            }
+
+            // 全部场景完成后再预下载 end 资源（若存在）
+            if (CONFIG.assets && CONFIG.assets.end) {
+                try {
+                    console.log(`[场景预下载] 开始下载 end 资源: ${CONFIG.assets.end}`);
+                    await ProposalApp._preloadAsset(CONFIG.assets.end);
+                    console.log(`[场景预下载] end 资源下载完成: ${CONFIG.assets.end}`);
+                } catch (e) {
+                    console.error('[场景预下载] end 资源下载失败', e);
+                }
+            }
+        })();
+    }
+
+    // 列出某一幕需要预下载的资源（视频、背景图、选项图标等）并去重
+    static _resourcesForScene(sceneIndex) {
+        const resources = [];
+        const scene = CONFIG.scenes[sceneIndex];
+        if (!scene) return resources;
+
+        // 视频资源：scene.video 指向 CONFIG.assets 的 key
+        if (scene.video && CONFIG.assets && CONFIG.assets[scene.video]) {
+            resources.push(CONFIG.assets[scene.video]);
+        }
+
+        // 背景图（通常是文件名，如 Q1bg.jpg）
+        if (scene.bg) {
+            const bg = scene.bg.startsWith('asset/') ? scene.bg : `asset/${scene.bg}`;
+            resources.push(bg);
+        }
+
+        // 选项图标（svg/png 等）
+        if (Array.isArray(scene.optionsfont)) {
+            scene.optionsfont.forEach(f => {
+                if (!f) return;
+                const p = f.startsWith('asset/') ? f : `asset/${f}`;
+                resources.push(p);
+            });
+        }
+
+        // 去重并返回
+        return Array.from(new Set(resources));
+    }
+
+    // 为指定场景顺序预下载资源（返回 Promise）
+    static preloadResourcesForScene(sceneIndex) {
+        const resources = ProposalApp._resourcesForScene(sceneIndex);
+        if (!resources || resources.length === 0) return Promise.resolve();
+
+        // 顺序/并行都可以，这里对单个场景内部采用并行下载，但场景之间串行
+        const promises = resources.map(src => ProposalApp._preloadAsset(src));
+        return Promise.all(promises).then(() => {});
+    }
+
+    // 通用资源预下载：video/audio/image 等，开始/完成时打印日志
+    static _preloadAsset(src) {
+        return new Promise((resolve) => {
+            if (!src) return resolve();
+
+            // 规范化 src（相对路径不变）
+            const url = src;
+            console.log(`[预下载] 开始下载: ${url}`);
+
+            // 视频
+            if (/\.mp4(?:\?|$)/i.test(url)) {
+                const video = document.createElement('video');
+                video.src = url;
+                video.preload = 'auto';
+                video.muted = true;
+                video.style.display = 'none';
+                video.setAttribute('playsinline', '');
+                video.setAttribute('webkit-playsinline', '');
+                document.body.appendChild(video);
+
+                let settled = false;
+
+                const onLoaded = () => {
+                    if (settled) return;
+                    settled = true;
+                    console.log(`[预下载] 下载完成: ${url}`);
+                    video.removeEventListener('canplaythrough', onLoaded);
+                    video.removeEventListener('error', onError);
+                    resolve();
+                };
+
+                const onError = (ev) => {
+                    if (settled) return;
+                    settled = true;
+                    video.removeEventListener('canplaythrough', onLoaded);
+                    video.removeEventListener('error', onError);
+                    console.error(`[预下载] 视频下载错误: ${url}`, ev);
+                    // mp4 必须成功，否则视为失败并拒绝，以便上层停止序列
+                    resolve(Promise.reject(new Error(`Video preload failed: ${url}`)));
+                };
+
+                video.addEventListener('canplaythrough', onLoaded);
+                video.addEventListener('error', onError);
+
+                // 兜底超时：若超时也视为失败，触发 reject
+                const to = setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    try { video.removeEventListener('canplaythrough', onLoaded); } catch (e) {}
+                    try { video.removeEventListener('error', onError); } catch (e) {}
+                    console.error(`[预下载] 视频预下载超时: ${url}`);
+                    resolve(Promise.reject(new Error(`Video preload timeout: ${url}`)));
+                }, 30000);
+
+                return;
+            }
+
+            // 图片 / svg
+            if (/\.(png|jpe?g|gif|svg)(?:\?|$)/i.test(url)) {
+                const img = new Image();
+                img.src = url;
+                img.onload = () => {
+                    console.log(`[预下载] 下载完成: ${url}`);
+                    resolve();
+                };
+                img.onerror = () => {
+                    console.warn(`[预下载] 下载失败: ${url}`);
+                    resolve();
+                };
+                return;
+            }
+
+            // 其他（尝试用 fetch 快速触发下载，响应时认为完成）
+            try {
+                fetch(url, { method: 'GET', mode: 'no-cors' }).then(() => {
+                    console.log(`[预下载] 下载完成(fetch): ${url}`);
+                    resolve();
+                }).catch(() => {
+                    console.warn(`[预下载] fetch 失败: ${url}`);
+                    resolve();
+                });
+            } catch (e) {
+                console.warn(`[预下载] 无法预下载: ${url}`);
+                resolve();
+            }
         });
     }
     constructor() {
