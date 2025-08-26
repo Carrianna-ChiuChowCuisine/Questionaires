@@ -70,6 +70,81 @@ class ProposalApp {
         return filename.startsWith('asset/') ? filename : `asset/${filename}`;
     }
 
+    // 在页面右上角短暂弹出可自动消失的通知（支持多条堆叠，默认 1s 后消失）
+    static _showTransientNotice(message, timeout = 2000) {
+        try {
+            const containerId = 'transient-notice-container';
+            let container = document.getElementById(containerId);
+            if (!container) {
+                container = document.createElement('div');
+                container.id = containerId;
+                // 容器样式：固定在右上角，垂直排列，新的 notice 在下方
+                container.style.position = 'fixed';
+                container.style.right = '12px';
+                container.style.top = '12px';
+                container.style.zIndex = '9999';
+                container.style.display = 'flex';
+                container.style.flexDirection = 'column';
+                container.style.alignItems = 'flex-end';
+                container.style.gap = '8px';
+                container.style.pointerEvents = 'none'; // 让通知不阻塞页面交互
+                document.body.appendChild(container);
+            }
+
+            const note = document.createElement('div');
+            note.className = 'transient-notice-item';
+            note.textContent = message;
+            note.style.background = 'rgba(0,0,0,0.75)';
+            note.style.color = '#fff';
+            note.style.padding = '8px 12px';
+            note.style.borderRadius = '6px';
+            note.style.fontSize = '12px';
+            note.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+            note.style.maxWidth = '70%';
+            note.style.wordBreak = 'break-word';
+            note.style.opacity = '0';
+            note.style.transform = 'translateY(-4px)';
+            note.style.transition = 'opacity 240ms ease, transform 240ms ease';
+            note.style.pointerEvents = 'auto';
+
+            // 新的 notice 应该在已有 notice 的下方 — appendChild 会放到容器末尾，因此在视觉上在下方
+            container.appendChild(note);
+
+            // 强制浏览器绘制后启动动画
+            requestAnimationFrame(() => {
+                note.style.opacity = '1';
+                note.style.transform = 'translateY(0)';
+            });
+
+            // 自动消失
+            const hide = () => {
+                note.style.transition = 'opacity 240ms ease, transform 240ms ease';
+                note.style.opacity = '0';
+                note.style.transform = 'translateY(-4px)';
+                setTimeout(() => {
+                    try { note.remove(); } catch (e) {}
+                    // 若容器已空则移除容器
+                    try {
+                        if (container && container.children.length === 0) container.remove();
+                    } catch (e) {}
+                }, 260);
+            };
+
+            note._hideTimer = setTimeout(hide, timeout);
+
+            // 若用户在 notice 上触摸/点击，延长显示以便查看（移动端友好）
+            const prolong = () => {
+                if (note._hideTimer) clearTimeout(note._hideTimer);
+                note._hideTimer = setTimeout(hide, Math.max(1000, timeout));
+            };
+            note.addEventListener('touchstart', prolong, { passive: true });
+            note.addEventListener('mouseenter', prolong);
+
+        } catch (e) {
+            console.warn('无法显示 transient notice', e);
+        }
+    }
+
     // 为指定场景顺序预下载资源（返回 Promise）
     static preloadResourcesForScene(sceneIndex) {
         if (!ProposalApp._scenePreloadPromises) ProposalApp._scenePreloadPromises = {};
@@ -117,6 +192,7 @@ class ProposalApp {
                     if (settled) return;
                     settled = true;
                     console.log(`[预下载] 下载完成: ${url}`);
+                    try { ProposalApp._showTransientNotice(`视频已下载: ${url}`); } catch (e) {}
                     video.removeEventListener('canplaythrough', onLoaded);
                     video.removeEventListener('error', onError);
                     resolve();
@@ -128,6 +204,7 @@ class ProposalApp {
                     video.removeEventListener('canplaythrough', onLoaded);
                     video.removeEventListener('error', onError);
                     console.error(`[预下载] 视频下载错误: ${url}`, ev);
+                    try { ProposalApp._showTransientNotice(`视频下载失败: ${url}`); } catch (e) {}
                     // mp4 必须成功，否则视为失败并拒绝，以便上层停止序列
                     resolve(Promise.reject(new Error(`Video preload failed: ${url}`)));
                 };
@@ -142,6 +219,7 @@ class ProposalApp {
                     try { video.removeEventListener('canplaythrough', onLoaded); } catch (e) {}
                     try { video.removeEventListener('error', onError); } catch (e) {}
                     console.error(`[预下载] 视频预下载超时: ${url}`);
+                    try { ProposalApp._showTransientNotice(`视频预下载超时: ${url}`); } catch (e) {}
                     resolve(Promise.reject(new Error(`Video preload timeout: ${url}`)));
                 }, 30000);
 
@@ -191,7 +269,98 @@ class ProposalApp {
         // 设置CSS变量
         this.setCSSVariables();
 
+        // 启动资源监控器（左上角，移动端/桌面调试用）
+        ProposalApp._startResourceMonitor();
+
         this.init();
+    }
+
+    // 启动左上角资源监控（每秒更新）；返回 interval id
+    static _startResourceMonitor() {
+        try {
+            const id = 'resource-monitor';
+            if (document.getElementById(id)) return; // 已存在则不重复启动
+
+            const el = document.createElement('div');
+            el.id = id;
+            el.style.position = 'fixed';
+            el.style.left = '8px';
+            el.style.top = '8px';
+            el.style.zIndex = '9999';
+            el.style.background = 'rgba(0,0,0,0.45)';
+            el.style.color = '#fff';
+            el.style.padding = '6px 10px';
+            el.style.borderRadius = '6px';
+            el.style.fontSize = '12px';
+            el.style.lineHeight = '1.2';
+            el.style.fontFamily = 'monospace';
+            el.style.pointerEvents = 'none';
+            el.style.minWidth = '140px';
+            el.style.textAlign = 'left';
+            el.style.wordBreak = 'break-word';
+            document.body.appendChild(el);
+
+            function formatMB(bytes) {
+                return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+            }
+
+            const update = () => {
+                try {
+                    const medias = Array.from(document.querySelectorAll('video, audio'));
+                    const totalMedia = medias.length;
+                    // 活跃的解码器：正在播放或已就绪且未结束的媒体
+                    const active = medias.filter(m => !m.paused && !m.ended && m.readyState > 0).length;
+
+                    // 估算视频纹理内存：宽*高*4 bytes
+                    let videoTextureBytes = 0;
+                    for (const v of document.querySelectorAll('video')) {
+                        const w = v.videoWidth || 0;
+                        const h = v.videoHeight || 0;
+                        if (w > 0 && h > 0) videoTextureBytes += (w * h * 4);
+                    }
+
+                    let jsHeap = 'N/A';
+                    if (performance && performance.memory && typeof performance.memory.usedJSHeapSize === 'number') {
+                        jsHeap = formatMB(performance.memory.usedJSHeapSize);
+                    }
+
+                    const deviceMem = (navigator && navigator.deviceMemory) ? navigator.deviceMemory + ' GB' : 'unknown';
+
+                    el.innerHTML = `Decoder: ${active}/${totalMedia}<br>JS heap: ${jsHeap}<br>Video tex: ${formatMB(videoTextureBytes)}<br>DeviceMem: ${deviceMem}`;
+                } catch (e) {
+                    // 忍受更新错误，稍后再试
+                    el.textContent = 'monitor error';
+                }
+            };
+
+            update();
+            const iid = setInterval(update, 1000);
+
+            // 在页面卸载时清理
+            const cleanup = () => {
+                try { clearInterval(iid); } catch (e) {}
+                try { const el2 = document.getElementById(id); if (el2) el2.remove(); } catch (e) {}
+                window.removeEventListener('beforeunload', cleanup);
+            };
+            window.addEventListener('beforeunload', cleanup);
+            // 记录在全局以便调试/停止
+            ProposalApp._resourceMonitorInterval = iid;
+            return iid;
+        } catch (e) {
+            console.warn('无法启动资源监控', e);
+        }
+    }
+
+    // 停止资源监控器
+    static _stopResourceMonitor() {
+        try {
+            if (ProposalApp._resourceMonitorInterval) {
+                clearInterval(ProposalApp._resourceMonitorInterval);
+                ProposalApp._resourceMonitorInterval = null;
+            }
+            const el = document.getElementById('resource-monitor');
+            if (el) el.remove();
+        } catch (e) {}
     }
 
     async init() {
@@ -429,12 +598,33 @@ class ProposalApp {
             // 使用config中的svg文件作为icon
             const iconSpan = document.createElement('span');
             iconSpan.className = 'option-icon';
+            // 尝试解析图标路径：优先使用 scene.optionsfont，其次尝试从 CONFIG.assets[sceneIndex] 中找 svg，最后回退到猜测命名
+            let iconSrc = null;
             if (scene.optionsfont && scene.optionsfont[index]) {
+                iconSrc = ProposalApp._findAsset(scene.optionsfont[index]);
+            } else if (Array.isArray(CONFIG.assets) && Array.isArray(CONFIG.assets[sceneIndex])) {
+                const svgFiles = CONFIG.assets[sceneIndex].filter(f => /\.svg$/i.test(f));
+                if (svgFiles && svgFiles[index]) {
+                    iconSrc = ProposalApp._findAsset(svgFiles[index]);
+                }
+            }
+            // 最后尝试按约定命名寻找（例如 Q1_1.svg）
+            if (!iconSrc) {
+                const guessed = `Q${sceneIndex}_${index + 1}.svg`;
+                iconSrc = ProposalApp._findAsset(guessed);
+            }
+
+            if (iconSrc) {
                 const img = document.createElement('img');
-                img.src = `asset/${scene.optionsfont[index]}`;
+                img.src = iconSrc;
                 img.alt = '';
                 img.style.width = '32px';
                 img.style.height = '32px';
+                // 若图标加载失败则尝试在 CONFIG.assets 中做不区分大小写的模糊匹配重试，若无可用替代则移除并打印警告
+                img.addEventListener('error', () => {
+                    console.warn('[选项图标] 加载失败，移除图标:', iconSrc);
+                    try { img.remove(); } catch (e) {}
+                });
                 iconSpan.appendChild(img);
             }
             optionBtn.appendChild(iconSpan);
@@ -634,21 +824,30 @@ class ProposalApp {
         // 等待视频就绪（canplaythrough）
         const waitVideoReady = new Promise((resolve, reject) => {
             let settled = false;
-            const onLoaded = () => { if (settled) return;
+            const onLoaded = () => {
+                if (settled) return;
                 settled = true;
                 cleanup();
-                resolve(); };
-            const onError = (e) => { if (settled) return;
+                resolve();
+            };
+            const onError = (e) => {
+                if (settled) return;
                 settled = true;
                 cleanup();
-                reject(new Error('endVideo error')); };
-            const to = setTimeout(() => { if (settled) return;
+                reject(new Error('endVideo error'));
+            };
+            const to = setTimeout(() => {
+                if (settled) return;
                 settled = true;
                 cleanup();
-                reject(new Error('endVideo timeout')); }, 30000);
+                reject(new Error('endVideo timeout'));
+            }, 30000);
 
-            function cleanup() { try { endVideo.removeEventListener('canplaythrough', onLoaded); } catch (e) {} try { endVideo.removeEventListener('error', onError); } catch (e) {}
-                clearTimeout(to); }
+            function cleanup() {
+                try { endVideo.removeEventListener('canplaythrough', onLoaded); } catch (e) {}
+                try { endVideo.removeEventListener('error', onError); } catch (e) {}
+                clearTimeout(to);
+            }
             endVideo.addEventListener('canplaythrough', onLoaded);
             endVideo.addEventListener('error', onError);
         });
@@ -657,12 +856,18 @@ class ProposalApp {
         const waitAudioReady = new Promise((resolve) => {
             if (!audio) return resolve();
             if (audio.readyState >= 3) return resolve();
-            const onCan = () => { cleanup();
-                resolve(); };
-            const to = setTimeout(() => { cleanup();
-                resolve(); }, 5000); // 小超时后继续（best-effort）
-            function cleanup() { try { audio.removeEventListener('canplaythrough', onCan); } catch (e) {}
-                clearTimeout(to); }
+            const onCan = () => {
+                cleanup();
+                resolve();
+            };
+            const to = setTimeout(() => {
+                cleanup();
+                resolve();
+            }, 5000); // 小超时后继续（best-effort）
+            function cleanup() {
+                try { audio.removeEventListener('canplaythrough', onCan); } catch (e) {}
+                clearTimeout(to);
+            }
             audio.addEventListener('canplaythrough', onCan);
         });
 
