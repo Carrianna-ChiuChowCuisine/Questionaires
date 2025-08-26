@@ -31,20 +31,20 @@ class ProposalApp {
         if (Array.isArray(CONFIG.assets) && CONFIG.assets[sceneIndex]) {
             CONFIG.assets[sceneIndex].forEach(fname => {
                 if (!fname) return;
-                const p = fname.startsWith('asset/') ? fname : `asset/${fname}`;
+                const p = ProposalApp._findAsset(fname);
                 resources.push(p);
             });
         }
 
         // 兼容：若 scene 中仍指定 bg 或 optionsfont，确保包含
         if (scene.bg) {
-            const bg = scene.bg.startsWith('asset/') ? scene.bg : `asset/${scene.bg}`;
+            const bg = ProposalApp._findAsset(scene.bg);
             resources.push(bg);
         }
         if (Array.isArray(scene.optionsfont)) {
             scene.optionsfont.forEach(f => {
                 if (!f) return;
-                const p = f.startsWith('asset/') ? f : `asset/${f}`;
+                const p = ProposalApp._findAsset(f);
                 resources.push(p);
             });
         }
@@ -53,21 +53,25 @@ class ProposalApp {
         return Array.from(new Set(resources));
     }
 
-    // 在 CONFIG.assets 中查找某个文件名并返回带前缀的路径（asset/filename）
+    // 返回 release 资源基地址（方便未来改 tag）
+    static _assetBase() {
+        return 'https://github.com/Carrianna-ChiuChowCuisine/Questionaires/releases/download/0.0.0/';
+    }
+
+    // 在 CONFIG.assets 中查找某个文件名并返回完整的 URL（指向 GitHub release）
     static _findAsset(filename) {
         if (!filename) return null;
-        if (!Array.isArray(CONFIG.assets)) return filename.startsWith('asset/') ? filename : `asset/${filename}`;
-        for (const group of CONFIG.assets) {
-            if (!Array.isArray(group)) continue;
-            for (const f of group) {
-                if (!f) continue;
-                if (f === filename || f.endsWith(filename)) {
-                    return f.startsWith('asset/') ? f : `asset/${f}`;
-                }
-            }
+        // 如果已是完整 URL，则原样返回
+        if (/^https?:\/\//i.test(filename) || filename.startsWith('//')) return filename;
+
+        // 取文件名的最后一部分作为 release 中的文件名
+        const baseName = filename.split('/').pop();
+        // 构建 release URL
+        try {
+            return ProposalApp._assetBase() + encodeURIComponent(baseName);
+        } catch (e) {
+            return ProposalApp._assetBase() + baseName;
         }
-        // fallback：直接加前缀
-        return filename.startsWith('asset/') ? filename : `asset/${filename}`;
     }
 
     // 在页面右上角短暂弹出可自动消失的通知（支持多条堆叠，默认 1s 后消失）
@@ -145,6 +149,56 @@ class ProposalApp {
         }
     }
 
+    // 尝试获取资源的 Content-Length（优先用 HEAD，再退回带 Range 的 GET），若不可得则返回 null
+    static async _fetchContentLength(url) {
+        try {
+            // 先尝试 HEAD
+            const head = await fetch(url, { method: 'HEAD' });
+            if (head && head.headers) {
+                const cl = head.headers.get('content-length');
+                if (cl) return parseInt(cl, 10);
+            }
+        } catch (e) {
+            // ignore and try Range GET
+        }
+
+        try {
+            // 尝试使用 Range 请求以避免完整下载（若服务器支持，会在 content-range 中给出总长度）
+            const resp = await fetch(url, { method: 'GET', headers: { 'Range': 'bytes=0-0' } });
+            if (resp && resp.headers) {
+                const cr = resp.headers.get('content-range');
+                if (cr) {
+                    // 格式: bytes 0-0/12345
+                    const m = cr.match(/\/(\d+)$/);
+                    if (m && m[1]) return parseInt(m[1], 10);
+                }
+                const cl2 = resp.headers.get('content-length');
+                if (cl2) return parseInt(cl2, 10);
+            }
+        } catch (e) {
+            // 最后兜底返回 null
+        }
+        return null;
+    }
+
+    // 尝试通过 PerformanceResourceTiming 判断资源是否命中浏览器缓存（best-effort）
+    static _isResourceCached(url) {
+        try {
+            if (!performance || !performance.getEntriesByName) return false;
+            const entries = performance.getEntriesByName(url) || [];
+            if (!entries.length) return false;
+            // 取最后一个相关条目
+            const entry = entries[entries.length - 1];
+            // transferSize 为 0 时通常表示从缓存读取（或受限），这是一个较好的指示器
+            if (typeof entry.transferSize === 'number') {
+                return entry.transferSize === 0;
+            }
+        } catch (e) {
+            // 忽略
+        }
+        return false;
+    }
+
     // 为指定场景顺序预下载资源（返回 Promise）
     static preloadResourcesForScene(sceneIndex) {
         if (!ProposalApp._scenePreloadPromises) ProposalApp._scenePreloadPromises = {};
@@ -187,6 +241,7 @@ class ProposalApp {
 
                 let settled = false;
                 let to = null;
+                const startTs = Date.now();
 
                 const cleanup = () => {
                     try { video.removeEventListener('canplaythrough', onLoaded); } catch (e) {}
@@ -197,21 +252,41 @@ class ProposalApp {
                     try { video.load(); } catch (e) {}
                 };
 
-                const onLoaded = () => {
+                const onLoaded = async() => {
                     if (settled) return;
                     settled = true;
                     console.log(`[预下载] 下载完成: ${url}`);
-                    try { if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) ProposalApp._showTransientNotice(`视频已下载: ${url}`); } catch (e) {}
                     cleanup();
+                    try {
+                        if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) {
+                            let size = null;
+                            try { size = await ProposalApp._fetchContentLength(url); } catch (e) { size = null; }
+                            const elapsed = Date.now() - startTs;
+                            const secs = Math.round((elapsed / 1000) * 10) / 10; // 1 decimal
+                            const sizeStr = size ? ` ${Math.round((size / 1024 / 1024) * 10) / 10} MB` : '';
+                            const cached = ProposalApp._isResourceCached(url) ? ' (cached)' : '';
+                            ProposalApp._showTransientNotice(`视频已下载: ${url} (${secs}s${sizeStr}${cached})`);
+                        }
+                    } catch (e) {}
                     resolve();
                 };
 
-                const onError = (ev) => {
+                const onError = async(ev) => {
                     if (settled) return;
                     settled = true;
                     cleanup();
                     console.error(`[预下载] 视频下载错误: ${url}`, ev);
-                    try { if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) ProposalApp._showTransientNotice(`视频下载失败: ${url}`); } catch (e) {}
+                    try {
+                        if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) {
+                            let size = null;
+                            try { size = await ProposalApp._fetchContentLength(url); } catch (e) { size = null; }
+                            const elapsed = Date.now() - startTs;
+                            const secs = Math.round((elapsed / 1000) * 10) / 10;
+                            const sizeStr = size ? ` ${Math.round((size / 1024 / 1024) * 10) / 10} MB` : '';
+                            const cached = ProposalApp._isResourceCached(url) ? ' (cached)' : '';
+                            ProposalApp._showTransientNotice(`视频下载失败: ${url} (${secs}s${sizeStr}${cached})`);
+                        }
+                    } catch (e) {}
                     // mp4 必须成功，否则视为失败并拒绝，以便上层停止序列
                     reject(new Error(`Video preload failed: ${url}`));
                 };
@@ -220,12 +295,22 @@ class ProposalApp {
                 video.addEventListener('error', onError);
 
                 // 兜底超时：若超时也视为失败，触发 reject
-                to = setTimeout(() => {
+                to = setTimeout(async() => {
                     if (settled) return;
                     settled = true;
                     cleanup();
                     console.error(`[预下载] 视频预下载超时: ${url}`);
-                    try { if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) ProposalApp._showTransientNotice(`视频预下载超时: ${url}`); } catch (e) {}
+                    try {
+                        if (window.CONFIG && CONFIG.debug && CONFIG.debug.enableDownloadNotices) {
+                            let size = null;
+                            try { size = await ProposalApp._fetchContentLength(url); } catch (e) { size = null; }
+                            const elapsed = Date.now() - startTs;
+                            const secs = Math.round((elapsed / 1000) * 10) / 10;
+                            const sizeStr = size ? ` ${Math.round((size / 1024 / 1024) * 10) / 10} MB` : '';
+                            const cached = ProposalApp._isResourceCached(url) ? ' (cached)' : '';
+                            ProposalApp._showTransientNotice(`视频预下载超时: ${url} (${secs}s${sizeStr}${cached})`);
+                        }
+                    } catch (e) {}
                     reject(new Error(`Video preload timeout: ${url}`));
                 }, 30000);
 
@@ -584,10 +669,10 @@ class ProposalApp {
 
         // 背景图片
         let bgDiv = null;
-        if (scene.bg) {
+            if (scene.bg) {
             bgDiv = document.createElement('div');
             bgDiv.className = 'question-bg';
-            bgDiv.style.backgroundImage = `url('asset/${scene.bg}')`;
+            bgDiv.style.backgroundImage = `url('${ProposalApp._findAsset(scene.bg)}')`;
             // 明确设置过渡时长，确保与配置同步
             bgDiv.style.transition = `opacity ${CONFIG.timings.questionFadeOut}ms ease-in-out`;
             bgDiv.style.willChange = 'opacity';
@@ -729,10 +814,10 @@ class ProposalApp {
 
         // 动态创建并播放视频
         const scene = CONFIG.scenes[sceneIndex];
-        const video = document.createElement('video');
+    const video = document.createElement('video');
         video.className = 'video-background';
-        // scene.video 已含文件名（例如 scene1.mp4），按新的 config.assets 结构使用 asset/ 前缀
-        video.src = scene.video && scene.video.startsWith('asset/') ? scene.video : `asset/${scene.video}`;
+    // scene.video 已含文件名（例如 scene1.mp4），使用 release URL
+    video.src = scene.video ? ProposalApp._findAsset(scene.video) : null;
         video.muted = false;
         video.playsInline = true;
         video.currentTime = 0;
@@ -830,9 +915,9 @@ class ProposalApp {
         if (this.questionBgm) this.fadeOutAudioVolume(this.questionBgm, CONFIG.timings.bgmFade);
 
         // 创建 end 视频与音效，并尝试在两者都就绪后同时开始播放以保证同步
-        const endVideo = document.createElement('video');
+    const endVideo = document.createElement('video');
         endVideo.className = 'video-background';
-        endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? (CONFIG.scenes[5].video.startsWith('asset/') ? CONFIG.scenes[5].video : `asset/${CONFIG.scenes[5].video}`) : 'asset/end.mp4';
+    endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? ProposalApp._findAsset(CONFIG.scenes[5].video) : ProposalApp._findAsset('end.mp4');
         endVideo.playsInline = true;
         endVideo.muted = true; // 保持静音以增加 autoplay 成功率
         endVideo.autoplay = false; // 我们将通过代码在准备好后一并调用 play()
