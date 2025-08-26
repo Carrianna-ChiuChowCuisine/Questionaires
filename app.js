@@ -55,7 +55,7 @@ class ProposalApp {
 
     // 返回 release 资源基地址（方便未来改 tag）
     static _assetBase() {
-        return 'https://github.com/Carrianna-ChiuChowCuisine/Questionaires/releases/download/0.0.0/';
+        return 'http://t1m5ir6s4.hn-bkt.clouddn.com/asset/';
     }
 
     // 在 CONFIG.assets 中查找某个文件名并返回完整的 URL（指向 GitHub release）
@@ -669,7 +669,7 @@ class ProposalApp {
 
         // 背景图片
         let bgDiv = null;
-            if (scene.bg) {
+        if (scene.bg) {
             bgDiv = document.createElement('div');
             bgDiv.className = 'question-bg';
             bgDiv.style.backgroundImage = `url('${ProposalApp._findAsset(scene.bg)}')`;
@@ -814,10 +814,10 @@ class ProposalApp {
 
         // 动态创建并播放视频
         const scene = CONFIG.scenes[sceneIndex];
-    const video = document.createElement('video');
+        const video = document.createElement('video');
         video.className = 'video-background';
-    // scene.video 已含文件名（例如 scene1.mp4），使用 release URL
-    video.src = scene.video ? ProposalApp._findAsset(scene.video) : null;
+        // scene.video 已含文件名（例如 scene1.mp4），使用 release URL
+        video.src = scene.video ? ProposalApp._findAsset(scene.video) : null;
         video.muted = false;
         video.playsInline = true;
         video.currentTime = 0;
@@ -915,9 +915,9 @@ class ProposalApp {
         if (this.questionBgm) this.fadeOutAudioVolume(this.questionBgm, CONFIG.timings.bgmFade);
 
         // 创建 end 视频与音效，并尝试在两者都就绪后同时开始播放以保证同步
-    const endVideo = document.createElement('video');
+        const endVideo = document.createElement('video');
         endVideo.className = 'video-background';
-    endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? ProposalApp._findAsset(CONFIG.scenes[5].video) : ProposalApp._findAsset('end.mp4');
+        endVideo.src = (CONFIG.scenes && CONFIG.scenes[5] && CONFIG.scenes[5].video) ? ProposalApp._findAsset(CONFIG.scenes[5].video) : ProposalApp._findAsset('end.mp4');
         endVideo.playsInline = true;
         endVideo.muted = true; // 保持静音以增加 autoplay 成功率
         endVideo.autoplay = false; // 我们将通过代码在准备好后一并调用 play()
