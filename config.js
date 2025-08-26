@@ -19,9 +19,9 @@ window.CONFIG = {
             type: 'welcome',
             texts: [
                 { content: '打开音效体验更佳', delay: 0, waitForClick: true },
-                { content: '值此七夕佳节', delay: 0, waitForClick: true },
-                { content: '我为你准备了一个小活动', delay: 0, waitForClick: true },
-                { content: '请与我共赴这段旅程吧', delay: 0, waitForClick: true }
+                { content: '敬所有跨越山海的奔赴', delay: 0, waitForClick: true },
+                { content: '无畏岁月的誓言', delay: 0, waitForClick: true },
+                { content: '祝爱情永不落幕', delay: 0, waitForClick: true }
             ]
         },
         // 第1幕
