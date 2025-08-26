@@ -47,9 +47,12 @@ class ProposalApp {
 
     async init() {
         try {
-            await this.preloadAssets();
+            // 先预加载音频（快速），再设置音频上下文并启动应用
+            await this.preloadAudioAssets();
             this.setupAudio();
             this.startApp();
+            // 视频在后台并行预加载，scene4 完成后会触发 end.mp4 的预加载
+            this.preloadVideosInBackground();
         } catch (error) {
             console.error('初始化失败:', error);
             this.showError('加载失败，请刷新重试');
@@ -73,38 +76,55 @@ class ProposalApp {
     }
 
     async preloadAssets() {
+        // 这个方法已弃用：保留为空以兼容旧调用
+        // 请使用 preloadAudioAssets() 和 preloadVideosInBackground()
+        return;
+    }
+
+    // 仅预加载音频资源（立即返回，保证音频对象可用）
+    async preloadAudioAssets() {
         // 预加载音频文件
         this.bgm = new Audio(CONFIG.assets.bgm);
         this.bgm.loop = true;
         this.bgm.volume = 0;
-        // 播放速度设为 0.7 倍
         this.bgm.playbackRate = 1;
 
         this.clickSound = new Audio(CONFIG.assets.click);
-        // 点击音效初始音量设为 100%
         this.clickSound.volume = 1;
-        // 点击音效播放速度设为 0.7 倍
         this.clickSound.playbackRate = 1;
 
-        // 预加载 end 音效
+        // 预加载 end 音效（不自动播放、初始静音）
         this.endSound = new Audio(CONFIG.assets.end);
         this.endSound.volume = 0;
-        // end 音效不循环，按正常速率播放
+        this.endSound.loop = false;
 
-        // 预加载问卷 BGM
         this.questionBgm = new Audio(CONFIG.assets.questionbgm);
         this.questionBgm.loop = true;
         this.questionBgm.volume = 0;
 
-        // 预加载视频文件
-        const videoPromises = [
-            this.preloadVideo(CONFIG.assets.scene1),
-            this.preloadVideo(CONFIG.assets.scene2),
-            this.preloadVideo(CONFIG.assets.scene3),
-            this.preloadVideo(CONFIG.assets.scene4)
-        ];
+        // 返回已完成的 Promise，以便 await 使用
+        return Promise.resolve();
+    }
 
-        await Promise.all(videoPromises);
+    // 在后台并行预加载场景视频；在 scene4 完成后开始预加载 end.mp4
+    preloadVideosInBackground() {
+        try {
+            const p1 = this.preloadVideo(CONFIG.assets.scene1);
+            const p2 = this.preloadVideo(CONFIG.assets.scene2);
+            const p3 = this.preloadVideo(CONFIG.assets.scene3);
+            const p4 = this.preloadVideo(CONFIG.assets.scene4);
+            // 当 scene4 下载完成后再开始下载 end.mp4
+            p4.then(() => {
+                // 开始预加载 end.mp4
+                this.preloadVideo('asset/end.mp4').then(() => {
+                    console.log('[视频预下载] end.mp4 已完成');
+                }).catch(() => {});
+            }).catch(() => {});
+            // 可选：记录这些 promise
+            this._videoPreloads = [p1, p2, p3, p4];
+        } catch (e) {
+            console.warn('预加载视频后台任务启动失败', e);
+        }
     }
 
     // 渐强播放任意 HTMLAudioElement（以墙钟时间为准）
